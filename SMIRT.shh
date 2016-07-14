@@ -1,0 +1,204 @@
+#!/bin/bash
+
+
+#This is script that will split forward and reverse Illumina reads into subsets, assemble all the subsets and the complete assembly with spades, and run quast on all of the subsets. The goal of this script is to create x/y values that can be used to give an estimate of how many reads should be sequenced in order to result in a complete genome. Take note that comparison between previously seqeunced genomes and unsequence genomes is only useful when both bacterium are closely related. Finally, the x/y values should be quality checked with complete asssembly data.
+
+#Intros
+echo -e "SMIRT: \"Save Money with Illumina Reads by Timothy.\" 2016 SMIRT is compatable \nwith SPAdes v3.8.1 and QUAST v4.1. SMIRT must be run with Bash, not Dash. \n-h, --help for argument help"
+
+echo "..........."
+
+forward_read=
+reverse_read=
+start_value=
+incr_value=
+end_value=
+name=
+quast_dir=
+memory= 
+help=
+pacbio=
+Oxford_nanopore=
+force=false
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-f | --forwardreads )	shift
+					forward_read=$1
+					;;
+		-r | --reversereads )	shift
+					reverse_read=$1
+					;;
+		-s | --startvalue )	shift
+					start_value=$1
+					;;
+		-i | --incrementvalue )	shift
+					incr_value=$1
+					;;
+		-e | --endvalue )	shift
+					end_value=$1
+					;;	
+		-n | --name)		shift
+					name=$1
+					;;
+		-q | --quastdir)	shift
+					quast_dir=$1
+					;;
+		-m | --memorylimit)	shift
+					memory=$1
+					;;
+		-o | --output)		shift	
+					output=$1
+					;;
+		-p | --pacbio)		shift
+					pacbio=$1
+					;;
+		-O | --Oxfordnanopore)	shift
+					Oxford_nanopore=$1
+					;;
+		-F | --Force)		shift
+					let $force=true
+					;;
+		-h | --help)		shift
+echo -e "\nMandatory parameters \n -f, --forwardreads \tForward paired-end Illumina reads \n -r, --reversereads \tReverse paired-end Illumina reads \n -s, --startvalue \tStart value for subsetting reads \n -i, --incrementvalue \tIncrement value for subsetting reads \n -e, --endvalue \tEnd value for subsetting reads \n -n, --name \t\tName that appears in output file names and output table \n -m, --memorylimit \tMemory limit for running SPAdes, causing SPAdes to use \n\t\t\tsmaller buffers \n -q, --quastdir \tName of folder that user has quast installed \nOptional parameters \n -F, --Force \t\tForce overrights SMIRT's output file \n -h, --help \t\tEchoes argument help \n -o, --output \t\tSet output folder. Default output is ~/SMIRT_[--name] \n -O, --Oxfordnanopore \tRun SPAdes with designated Oxford Nanopore reads \n -p, --pacbio \t\tRun SPAdes with designated Pacbio reads"
+					exit
+					;;
+		* )	echo "unknown parameter" 
+			exit		;;		
+	esac
+	shift
+done
+
+output=~/SMIRT_${name}
+
+#Safety check
+
+if [[ -z "$name" ]]; then
+	echo "missing parameter -n, --name"; exit_value=1 
+fi
+
+if [[ -z "$end_value" ]]; then
+	echo "missing parameter -e, --endvalue"; exit_value=1
+fi
+
+if [[ -z "$incr_value" ]]; then
+	echo "missing parameter -i, --incrementvalue"; exit_value=1
+fi
+
+if [[ -z "$start_value" ]]; then
+	echo "missing parameter -s, --startvalue"; exit_value=1
+fi
+
+if [[ -z "$reverse_read" ]]; then
+	echo "missing parameter -r, --reversereads"; exit_value=1
+fi
+
+if [[ -z "$forward_read" ]]; then
+	echo "missing parameter -f, --forwardreads"; exit_value=1
+fi
+
+if [[ -z "$quast_dir" ]]; then
+	echo "missing parameter -q, --quastdir"; exit_value=1
+fi
+
+if [[ -z "$memory" ]]; then
+	echo "missing prameter -m, --memorlimit"; exit_value=1
+fi
+
+if [[ $exit_value -eq 1 ]]; then
+	exit
+fi
+#Cd to ~
+cd ~/
+#Safety feature
+if [[ -e ${output} && $force=false ]]; then 
+		echo "Output already  exists. Choose different output" ; exit 
+	fi
+
+#Program exit housekeeping
+ 
+function clean_up {
+	for n in $(seq $start_value $incr_value $end_value); do
+	rm -fr ~/assmbly_${name}_sub_${n} ~/sub_${name}_${n}_forward.fastq ~/sub_${name}_${n}_reverse.fastq ~/awk_${name}_${n}.txt ~/quast_sub_${name}_${n}
+	done
+	rm -f increasing_x_values_${name}.txt descending_y_values_${name}.txt
+	exit
+}
+
+trap clean_up SIGHUP SIGINT 
+
+#x-values
+rm -f increasing_x_values_${name}.txt
+rm -f descending_y_values_${name}.txt
+
+v=0
+
+while [ $(($start_value+($v*$incr_value))) -le $end_value ]; do
+	echo "$(($start_value+($v*$incr_value)))" >> increasing_x_values_${name}.txt
+	let v=v+1
+done
+
+#Subsetting the Illumina reads
+for n in $(seq $start_value $incr_value $end_value); do
+	seqtk sample -s50 $forward_read ${n} > ~/sub_${name}_${n}_forward.fastq ; seqtk sample -s50 $reverse_read ${n} > ~/sub_${name}_${n}_reverse.fastq
+#Running spades on original reads and subset reads
+	if [[ -z "$pacbio" && -z "$Oxford_nanopore" ]]; then	
+		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq -o ~/assembly_${name}_sub_${n}
+	fi
+
+	if [[ -n "$pacbio" && -z "$Oxford_nanopore" ]]; then 
+		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq --pacbio ${pacbio} -o ~/assembly_${name}_sub_${n}
+	fi
+
+	if [[ -z "$pacbio" && -n "$Oxford_nanopore" ]]; then
+		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq --nanopore ${Oxford_nanopore} -o ~/assembly_${name}_sub_${n}
+	fi
+
+	if [[ -n "$pacbio" && -n "$Oxford_nanopore" ]]; then
+		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq --pacbio ${pacbio} --nanopore ${Oxford_nanopore} -o ~/assembly_${name}_sub_${n}
+	fi
+
+#Running quast
+	cd ${quast_dir}
+	python quast.py -o ~/quast_sub_${name}_${n} ~/assembly_${name}_sub_${n}/contigs.fasta
+	cd ~/
+#Running awk and sed
+	if [ -e ~/quast_sub_${name}_$n/report.txt ]; then 
+		awk '/# contigs \(>= 0 bp\) / {print $0}' ~/quast_sub_${name}_${n}/report.txt | sed 's/[[:blank:]]//g' > awk_${name}_${n}.txt 
+		sed -i 's/#contigs(>=0bp)//g' awk_${name}_${n}.txt
+		cat awk_${name}_${n}.txt >> descending_y_values_${name}.txt
+	else
+		echo "N/A" >> descending_y_values_${name}.txt
+	fi
+#Removing letover files
+	rm -r ~/sub_${name}_${n}_forward.fastq ~/sub_${name}_${n}_reverse.fastq ~/awk_${name}_${n}.txt ~/quast_sub_${name}_${n}
+done
+
+#Quast report	
+cd ${quast_dir}
+python quast.py -o ~/quast_report_${name} ~/assembly_${name}_sub_*/*contigs.fasta
+cd ~/
+
+#Final table
+echo "$name" > finaltable_${name}.txt
+echo "" >> finaltable_${name}.txt
+echo "x-value      y-value" >> finaltable_${name}.txt
+echo "(# of reads) (# of contigs)" >> finaltable_${name}.txt  
+paste increasing_x_values_${name}.txt descending_y_values_${name}.txt | pr -t -e13 >> finaltable_${name}.txt
+
+#Final housekeeping
+for n in $(seq $start_value $incr_value $end_value); do
+	rm -r ~/assembly_${name}_sub_${n}
+done 
+
+rm descending_y_values_${name}.txt increasing_x_values_${name}.txt
+
+#Determining output directory
+mkdir ${output}
+mv finaltable_${name}.txt ~/quast_report_${name} ${output}
+
+#Goodbye
+echo ""
+echo "Thank you for using SMIRT!"
+
+exit
