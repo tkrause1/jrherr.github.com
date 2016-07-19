@@ -1,25 +1,28 @@
 #!/bin/bash
 
 
-#This is script that will split forward and reverse Illumina reads into subsets, assemble all the subsets and the complete assembly with spades, and run quast on all of the subsets. The goal of this script is to create x/y values that can be used to give an estimate of how many reads should be sequenced in order to result in a complete genome. Take note that comparison between previously seqeunced genomes and unsequence genomes is only useful when both bacterium are closely related. Finally, the x/y values should be quality checked with complete asssembly data.
+#SMIRT: \"Save Money with Illumina Reads by Timothy.\" 2016 SMIRT is compatable \nwith SPAdes v3.8.1 and QUAST v4.1. SMIRT must be run with Bash, not Dash. This is script that will split forward and reverse Illumina/Pacbio/Oxford Nanopore reads into subsets, assemble all the subsets and the complete assembly with SPAdes, and run Quast on all of the subsets. The goal of this script is to create x/y values that can be used to give an estimate of how many reads should be sequenced in order to result in a complete genome. Take note that comparison between previously seqeunced genomes and unsequence genomes is only useful when both bacterium are related. Finally, the x/y values should be quality checked with complete asssembly data. 
 
-#Intros
-echo -e "SMIRT: \"Save Money with Illumina Reads by Timothy.\" 2016 SMIRT is compatable \nwith SPAdes v3.8.1 and QUAST v4.1. SMIRT must be run with Bash, not Dash. \n-h, --help for argument help"
-
+#Intro
+echo "..........."
+echo -e "SMIRT2 is compatable with FastQC v0.11.3, SPAdes v3.8.1, and QUAST v4.1. \n-h, --help for argument help"
 echo "..........."
 
 forward_read=
 reverse_read=
 start_value=
-incr_value=
+incr_value=1
 end_value=
 name=
 quast_dir=
-memory= 
+memory=250 
 help=
 pacbio=
 Oxford_nanopore=
-force=false
+force=
+output=~/SMIRT_${name}
+fastqc=
+dataframe=
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -56,11 +59,13 @@ while [ $# -gt 0 ]; do
 		-O | --Oxfordnanopore)	shift
 					Oxford_nanopore=$1
 					;;
-		-F | --Force)		shift
-					let $force=true
+		-d | --dataframe)	dataframe=1
 					;;
-		-h | --help)		shift
-echo -e "\nMandatory parameters \n -f, --forwardreads \tForward paired-end Illumina reads \n -r, --reversereads \tReverse paired-end Illumina reads \n -s, --startvalue \tStart value for subsetting reads \n -i, --incrementvalue \tIncrement value for subsetting reads \n -e, --endvalue \tEnd value for subsetting reads \n -n, --name \t\tName that appears in output file names and output table \n -m, --memorylimit \tMemory limit for running SPAdes, causing SPAdes to use \n\t\t\tsmaller buffers \n -q, --quastdir \tName of folder that user has quast installed \nOptional parameters \n -F, --Force \t\tForce overrights SMIRT's output file \n -h, --help \t\tEchoes argument help \n -o, --output \t\tSet output folder. Default output is ~/SMIRT_[--name] \n -O, --Oxfordnanopore \tRun SPAdes with designated Oxford Nanopore reads \n -p, --pacbio \t\tRun SPAdes with designated Pacbio reads"
+		-F | --Force)		force=1
+					;;
+		-fa| --fastqc)		fastqc=1
+					;;
+		-h | --help)		echo -e "\nMandatory parameters \n -f, --forwardreads \tForward paired-end Illumina reads \n -r, --reversereads \tReverse paired-end Illumina reads \n -s, --startvalue \tStart value for subsetting reads \n -i, --incrementvalue \tIncrement value for subsetting reads \n -e, --endvalue \tEnd value for subsetting reads \nOR \n -fa, --fastqc \t\truns fastqc on [forwardreads.fastq] and sets the end \n\t\t\tvalue at the total sequences value \n -n, --name \t\tName that appears in output file names and output table \n -q, --quastdir \tName of folder that user has quast installed \nOptional parameters \n -d, --dataframe \tCompiles data from all previously run SMIRT scripts \n\t\t\tfound on ~/Master_Table.txt onto a \"R\" based dataframe \n -F, --Force \t\tForce overrights SMIRT's output files \n -h, --help \t\tEchoes argument help \n -o, --output \t\tSets output directory Default directory is \n\t\t\t~/SMIRT_[--name] \n -m, --memorylimit \tMemory limit for running SPAdes, causing SPAdes to use \n\t\t\tsmaller buffers \n -O, --Oxfordnanopore \tRun SPAdes with designated Oxford Nanopore reads \n -p, --pacbio \t\tRun SPAdes with designated Pacbio reads"
 					exit
 					;;
 		* )	echo "unknown parameter" 
@@ -69,16 +74,34 @@ echo -e "\nMandatory parameters \n -f, --forwardreads \tForward paired-end Illum
 	shift
 done
 
-output=~/SMIRT_${name}
-
 #Safety check
+
+if [[ $incr_value -eq 0 ]]; then
+	echo "-i, --incrementvalue cannot equal 0"; exit_value=1
+fi
+
+if [ ! lynx > /dev/null ]; then
+	echo "The program 'lynk' is currently not installed. You can install it by typing:\nsudo apt install links"; exit_value=1
+fi
+
+if [ ! paste > /dev/null ]; then
+	echo "The program 'paste' is currently not installed. You can install it by typing:\nsudo apt install paste"; exit_value=1
+fi
+
+if [ ! R > /dev/null ]; then
+	echo "The program 'R' is currently not installed. You can install it by typing:\nsudo apt install R"; exit_value=1
+fi
 
 if [[ -z "$name" ]]; then
 	echo "missing parameter -n, --name"; exit_value=1 
 fi
 
-if [[ -z "$end_value" ]]; then
-	echo "missing parameter -e, --endvalue"; exit_value=1
+if [[ -z "$end_value" && -z "$fastqc" ]]; then
+	echo "missing parameter -e, --endvalue or -fa, --fastqc"; exit_value=1
+fi
+
+if [[ -n "$end_value" && -n "$fastqc" ]]; then
+	echo "conflicting parameters -e, --endvalue and -fa, --fastqc"; exit_value=1
 fi
 
 if [[ -z "$incr_value" ]]; then
@@ -101,101 +124,151 @@ if [[ -z "$quast_dir" ]]; then
 	echo "missing parameter -q, --quastdir"; exit_value=1
 fi
 
-if [[ -z "$memory" ]]; then
-	echo "missing prameter -m, --memorlimit"; exit_value=1
-fi
-
 if [[ $exit_value -eq 1 ]]; then
 	exit
 fi
+
 #Cd to ~
 cd ~/
 #Safety feature
-if [[ -e ${output} && $force=false ]]; then 
-		echo "Output already  exists. Choose different output" ; exit 
-	fi
+if [[ -e ${output} && -z $force ]]; then 
+	echo "Output already  exists. Choose different output" ; exit 
+fi
+
+rm -rf ${output} ; mkdir ${output}
+mkdir ${output}/fastqc_${name}
+
+#Setting total sequences to end value with fastqc
+if [[ -n $fastqc ]]; then
+	fastqc $forward_read -o ${output}/fastqc_${name} 
+	lynx --dump ${output}/fastqc_${name}/*.html > ${output}/temp_file
+	awk '/Total / {print $0}' ${output}/temp_file | sed 's/[[:blank:]]//g' > ${output}/temp_file2.txt 
+	sed -i 's/TotalSequences//g' ${output}/temp_file2.txt
+	end_value=$(cat ${output}/temp_file2.txt)
+	rm -r ${output}/temp_file ${output}/temp_file2.txt	
+fi	
 
 #Program exit housekeeping
  
 function clean_up {
 	for n in $(seq $start_value $incr_value $end_value); do
-	rm -fr ~/assmbly_${name}_sub_${n} ~/sub_${name}_${n}_forward.fastq ~/sub_${name}_${n}_reverse.fastq ~/awk_${name}_${n}.txt ~/quast_sub_${name}_${n}
+	rm -fr ${output}/assembly_${name}_sub_${n} ${output}/sub_${name}_${n}_forward.fastq ${output}/sub_${name}_${n}_reverse.fastq ${output}/awk_${name}_${n}.txt ${output}/quast_sub_${name}_${n} ${output}/${forward_read}c.zip ${output}/${forward_read}c.html ${output}/fastqc_${name}.txt
 	done
-	rm -f increasing_x_values_${name}.txt descending_y_values_${name}.txt
+	rm -f ${output}/increasing_x_values_${name}.txt ${output}/descending_y_values_${name}.txt
 	exit
 }
 
 trap clean_up SIGHUP SIGINT 
 
 #x-values
-rm -f increasing_x_values_${name}.txt
-rm -f descending_y_values_${name}.txt
+rm -f ${output}/increasing_x_values_${name}.txt
+rm -f ${output}/descending_y_values_${name}.txt
 
 v=0
 
 while [ $(($start_value+($v*$incr_value))) -le $end_value ]; do
-	echo "$(($start_value+($v*$incr_value)))" >> increasing_x_values_${name}.txt
+	echo "$(($start_value+($v*$incr_value)))" >> ${output}/increasing_x_values_${name}.txt
 	let v=v+1
 done
 
 #Subsetting the Illumina reads
 for n in $(seq $start_value $incr_value $end_value); do
-	seqtk sample -s50 $forward_read ${n} > ~/sub_${name}_${n}_forward.fastq ; seqtk sample -s50 $reverse_read ${n} > ~/sub_${name}_${n}_reverse.fastq
+	seqtk sample -s50 $forward_read ${n} > ${output}/sub_${name}_${n}_forward.fastq ; seqtk sample -s50 $reverse_read ${n} > ${output}/sub_${name}_${n}_reverse.fastq
 #Running spades on original reads and subset reads
 	if [[ -z "$pacbio" && -z "$Oxford_nanopore" ]]; then	
-		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq -o ~/assembly_${name}_sub_${n}
+		spades.py -m ${memory} -1 ${output}/sub_${name}_${n}_forward.fastq -2 ${output}/sub_${name}_${n}_reverse.fastq -o ${output}/assembly_${name}_sub_${n}
 	fi
 
 	if [[ -n "$pacbio" && -z "$Oxford_nanopore" ]]; then 
-		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq --pacbio ${pacbio} -o ~/assembly_${name}_sub_${n}
+		spades.py -m ${memory} -1 ${output}/sub_${name}_${n}_forward.fastq -2 ${output}/sub_${name}_${n}_reverse.fastq --pacbio ${pacbio} -o ${output}/assembly_${name}_sub_${n}
 	fi
 
 	if [[ -z "$pacbio" && -n "$Oxford_nanopore" ]]; then
-		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq --nanopore ${Oxford_nanopore} -o ~/assembly_${name}_sub_${n}
+		spades.py -m ${memory} -1 ${output}/sub_${name}_${n}_forward.fastq -2 ${output}/sub_${name}_${n}_reverse.fastq --nanopore ${Oxford_nanopore} -o ${output}/assembly_${name}_sub_${n}
 	fi
 
 	if [[ -n "$pacbio" && -n "$Oxford_nanopore" ]]; then
-		spades.py -m ${memory} -1 sub_${name}_${n}_forward.fastq -2 sub_${name}_${n}_reverse.fastq --pacbio ${pacbio} --nanopore ${Oxford_nanopore} -o ~/assembly_${name}_sub_${n}
+		spades.py -m ${memory} -1 ${output}/sub_${name}_${n}_forward.fastq -2 ${output}/sub_${name}_${n}_reverse.fastq --pacbio ${pacbio} --nanopore ${Oxford_nanopore} -o ${output}/assembly_${name}_sub_${n}
 	fi
 
 #Running quast
 	cd ${quast_dir}
-	python quast.py -o ~/quast_sub_${name}_${n} ~/assembly_${name}_sub_${n}/contigs.fasta
+	python quast.py -o ${output}/quast_sub_${name}_${n} ${output}/assembly_${name}_sub_${n}/contigs.fasta
 	cd ~/
 #Running awk and sed
-	if [ -e ~/quast_sub_${name}_$n/report.txt ]; then 
-		awk '/# contigs \(>= 0 bp\) / {print $0}' ~/quast_sub_${name}_${n}/report.txt | sed 's/[[:blank:]]//g' > awk_${name}_${n}.txt 
-		sed -i 's/#contigs(>=0bp)//g' awk_${name}_${n}.txt
-		cat awk_${name}_${n}.txt >> descending_y_values_${name}.txt
+	if [ -e ${output}/quast_sub_${name}_$n/report.txt ]; then 
+		awk '/# contigs \(>= 0 bp\) / {print $0}' ${output}/quast_sub_${name}_${n}/report.txt | sed 's/[[:blank:]]//g' > ${output}/awk_${name}_${n}.txt 
+		sed -i 's/#contigs(>=0bp)//g' ${output}/awk_${name}_${n}.txt
+		cat ${output}/awk_${name}_${n}.txt >> ${output}/descending_y_values_${name}.txt
 	else
-		echo "N/A" >> descending_y_values_${name}.txt
+		echo "N/A" >> ${output}/descending_y_values_${name}.txt
 	fi
 #Removing letover files
-	rm -r ~/sub_${name}_${n}_forward.fastq ~/sub_${name}_${n}_reverse.fastq ~/awk_${name}_${n}.txt ~/quast_sub_${name}_${n}
+	rm -r ${output}/sub_${name}_${n}_forward.fastq ${output}/sub_${name}_${n}_reverse.fastq ${output}/awk_${name}_${n}.txt 
+
 done
 
 #Quast report	
 cd ${quast_dir}
-python quast.py -o ~/quast_report_${name} ~/assembly_${name}_sub_*/*contigs.fasta
+python quast.py -o ${output}/quast_report_${name} ${output}/assembly_${name}_sub_*/*contigs.fasta
 cd ~/
 
-#Final table
-echo "$name" > finaltable_${name}.txt
-echo "" >> finaltable_${name}.txt
-echo "x-value      y-value" >> finaltable_${name}.txt
-echo "(# of reads) (# of contigs)" >> finaltable_${name}.txt  
-paste increasing_x_values_${name}.txt descending_y_values_${name}.txt | pr -t -e13 >> finaltable_${name}.txt
+#Complete assembly
+spades.py -m ${memory} -1 ${forward_read} -2 ${reverse_read} -o ${output}/complete_assembly
+cd ${quast_dir}
+python quast.py -o ${output}/quast_complete_assembly ${output}/complete_assembly/contigs.fasta
+cd ~/
+
+#Genome Size
+if [ -e ${output}/quast_complete_assembly/report.txt ]; then 
+	awk '/Total length      / {print $0}' ${output}/quast_complete_assembly/report.txt | sed 's/[[:blank:]]//g' > ${output}/temp_file.txt 
+	sed -i 's/Totallength//g' ${output}/temp_file.txt
+	cat ${output}/temp_file.txt > ${output}/total_length_${name}.txt
+#GC%	
+	awk '/GC (%)  / {print $0}' ${output}/quast_complete_assembly/report.txt | sed 's/[[:blank:]]//g' > ${output}/temp_file.txt 
+	sed -i 's/GC(%)//g' ${output}/temp_file.txt
+	cat ${output}/temp_file.txt > ${output}/GC%_${name}.txt
+	rm ${output}/temp_file.txt
+#Platform
+	lynx --dump ${output}/fastqc_${name}/*.html > ${output}/temp_file.txt
+	awk '/Encoding / {print $0}' ${output}/temp_file.txt | sed 's/[[:blank:]]//g' > ${output}/temp_file2.txt 
+	sed -i 's/Encoding//g' ${output}/temp_file2.txt
+	cat ${output}/temp_file2.txt > ${output}/platform_${name}.txt
+	rm ${output}/temp_file.txt ${output}/temp_file2.txt
+#####Genus/species? 
+#####Read length?
+#####Number of genes?
+	
+#Read estimate table, x/y values
+	echo "(Read_Subsets) (contigs>=bp)" > ${output}/x_y_values.txt
+	paste ${output}/increasing_x_values_${name}.txt ${output}/descending_y_values_${name}.txt | pr -t -e13 >> x_y_values.txt
+
+#Read estimate for complete genome
+	echo 'temp_table <- data.frame(read.table("'"${output}"'/x_y_values.txt", skip=1, strip.white=TRUE)) ; read_values <- temp_table[,c("V1")] ; contig_values <- temp_table[,c("V2")] ; line_formula <- coef(lm(formula = contig_values ~ read_values)) ; line_formula <- as.numeric(gsub("([0-9]+).*$", "\\1", line_formula)) ; read_value_estimate <- line_formula[2] + line_formula[1] ; write(read_value_estimate, file ="'"${output}"'/read_value_estimate.txt")' > ${output}/temp_file.R
+	R --vanilla < ${output}/temp_file.R
+	rm ${output}/temp_file.R
+fi
+
+#Master table
+if [ ! -e ~/Master_Table.txt ]; then 
+	echo "Read_estimate Genome_size GC_Content Platform" > ~/Master_Table.txt 
+fi
+  
+paste ${output}/read_value_estimate.txt ${output}/total_length_${name}.txt ${output}/genome_size_${name}.txt ${output}/GC%_${name}.txt ${output}/platform_${name}.txt | pr -t -e13 >> ~/Master_Table.txt
+
+#Data frame
+if [[ -n "$dataframe" ]]; then
+	echo 'data_frame <- data.frame(read.table("~/Master_Table.txt", header=TRUE, strip.white=TRUE)) ; write.table(data_frame, file="~/Final_data_frame", sep="\t", row.names=F, na="NA", quote=F) ; save(data_frame, file="~/data_frame.Rdata")' > ~/temp_file.R
+	R --vanilla < ~/temp_file.R
+	rm ~/temp_file.R
+fi
 
 #Final housekeeping
-for n in $(seq $start_value $incr_value $end_value); do
-	rm -r ~/assembly_${name}_sub_${n}
-done 
+#####for n in $(seq $start_value $incr_value $end_value); do
+#	rm -r ${output}/assembly_${name}_sub_${n} ${output}/quast_sub_${name}_${n}
+#done 
 
-rm descending_y_values_${name}.txt increasing_x_values_${name}.txt
-
-#Determining output directory
-mkdir ${output}
-mv finaltable_${name}.txt ~/quast_report_${name} ${output}
+#####rm -r ${output}/descending_y_values_${name}.txt ${output}/increasing_x_values_${name}.txt ${output}/genome_size_${name}.txt ${output}/complete_assembly ${output}/fastqc_${name} ${output}/platform_${name}.txt ${output}/read_estimate_${name}.txt ${output}/genome_size_${name}.txt ${output}/genome_size_${name}.txt ${output}/GC%_${name}.txt ${output}/platform_${name}.txt ${output}/read_value_estimate.txt ${output}/x_y_values.txt
 
 #Goodbye
 echo ""
