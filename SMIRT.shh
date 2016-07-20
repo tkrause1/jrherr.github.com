@@ -241,7 +241,7 @@ if [ -e ${output}/quast_complete_assembly/report.txt ]; then
 	
 #Read estimate table, x/y values
 	echo "(Read_Subsets) (contigs>=bp)" > ${output}/x_y_values.txt
-	paste ${output}/increasing_x_values_${name}.txt ${output}/descending_y_values_${name}.txt | pr -t -e13 >> x_y_values.txt
+	paste ${output}/increasing_x_values_${name}.txt ${output}/descending_y_values_${name}.txt | pr -t -e13 >> ${output}/x_y_values.txt
 
 #Read estimate for complete genome
 	echo 'temp_table <- data.frame(read.table("'"${output}"'/x_y_values.txt", skip=1, strip.white=TRUE)) ; read_values <- temp_table[,c("V1")] ; contig_values <- temp_table[,c("V2")] ; line_formula <- coef(lm(formula = contig_values ~ read_values)) ; line_formula <- as.numeric(gsub("([0-9]+).*$", "\\1", line_formula)) ; read_value_estimate <- line_formula[2] + line_formula[1] ; write(read_value_estimate, file ="'"${output}"'/read_value_estimate.txt")' > ${output}/temp_file.R
@@ -251,7 +251,7 @@ fi
 
 #Master table
 if [ ! -e ~/Master_Table.txt ]; then 
-	echo "Read_estimate Genome_size GC_Content Platform" > ~/Master_Table.txt 
+	echo "Read_estimate  Genome_size  GC_Content  Platform" > ~/Master_Table.txt 
 fi
   
 paste ${output}/read_value_estimate.txt ${output}/total_length_${name}.txt ${output}/genome_size_${name}.txt ${output}/GC%_${name}.txt ${output}/platform_${name}.txt | pr -t -e13 >> ~/Master_Table.txt
@@ -275,3 +275,4 @@ echo ""
 echo "Thank you for using SMIRT!"
 
 exit
+
